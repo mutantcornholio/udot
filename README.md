@@ -21,5 +21,5 @@ echo "+ .vim/***" >> "$HOME/.udot/dotfiles"
 echo "my-server1.org" >> "$HOME/.udot/servers"
 echo "my-server2.org" >> "$HOME/.udot/servers"
 ```
-3. Run `udot`:
+3. Run `udot`:  
 ![screencast.gif](http://mcornholio-s3.s3.amazonaws.com/udot.gif)
