@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+RED="$(tput setaf 1)"
+GREEN="$(tput setaf 2)"
+CYAN="$(tput setaf 6)"
+DEF="$(tput sgr0)"
+
+dotfiles_list_location="$HOME/.udot/dotfiles"
+server_list_location="$HOME/.udot/servers"
+
+export RSYNC_ARGS='-aizh --include-from '"$dotfiles_list_location"' --exclude=* '"$HOME/*"
+
+if [[ $(uname) == "Darwin" ]]; then
+    # https://stackoverflow.com/a/23584470/1958334
+    export LC_CTYPE=C
+    export LANG=C
+fi
+
+usage() {
+    echo 'Usage: udot [SERVER1] [SERVER2]'
+    echo
+    echo 'Manually upload your dotfiles to servers'
+    echo
+    echo '1. Add dotfiles to ~/.udot/dotfiles using rsync-filter format'
+    echo '2. Add servers to ~/.udot/servers, separating them by newline'
+    echo '3. Run udot'
+    echo
+    echo 'Examples:'
+    echo '    udot                               Upload to servers listed in ~/.udot/servers'
+    echo '    udot foo.org bar.org               Upload dotfiles to foo.org bar.org'
+    echo
+}
+
+servers=()
+current_servers=()
+total_servers=0
+
+remove_server() {
+    elem="$1";
+
+    tmp_array=()
+    for i in "${current_servers[@]}"; do
+        if [[ "$i" != "$elem" ]]; then
+            tmp_array+=( "$i" )
+        fi
+    done
+
+    current_servers=("${tmp_array[@]}")
+}
+
+transform_output() {
+    line="$1"
+    res_line=""
+
+    if [[ $line == §§start* ]]; then
+        srv="$(echo "$line" | grep -Po '(?<=(§§start)).*')"
+        current_servers+=("$srv")
+    elif [[ $line == §§end* ]]; then
+        retcode="$(echo "$line" | sed -e 's/§§end§\([0-9]*\).*/\1/;')"
+        srv="$(echo "$line" | sed -e 's/§§end§[0-9]*§\(.*\)/\1/;')"
+
+        remove_server "$srv"
+
+        if [[ "$retcode" == 0 ]]; then
+            res_line+="${CYAN}${srv}${GREEN} done${DEF}\\n"
+        else
+            res_line+="${CYAN}${srv}${RED} failed!${DEF}\\n"
+        fi
+    else
+        srv="$(echo "$line" | sed -e "s/^§\\([^$]*\\)§.*/\\1/;")"
+        clean_line="$(echo "$line" | sed -e "s/^§\\([^$]*\\)§//;")"
+
+        res_line+="${CYAN}${srv}${DEF}$clean_line\\n"
+    fi
+
+    srv_count="${#current_servers[@]}"
+    if (( srv_count <= 2 )); then
+        srv_line="${CYAN}${current_servers[*]}$DEF"
+    else
+        srvs=("${current_servers[@]:0:2}")
+        srv_line="${CYAN}${srvs[*]}$DEF..."
+    fi
+
+    if (( srv_count > 0 )); then
+        progress="$(( total_servers - srv_count ))"
+
+        res_line+="${RED}[${progress}/${total_servers}]${GREEN} Waiting for: ${DEF}$srv_line"
+    fi
+    echo -en "\\033[1K\\r${res_line}"
+}
+
+main() {
+    while read -r line
+    do
+        transform_output "$line"
+    done < <( echo "${servers[@]}" | xargs -n1 -P 10 -I{} bash -c \
+        'shopt -s dotglob; srv="{}"; echo "§§start${srv}"; rsync ${RSYNC_ARGS} "${srv}":~ 2>&1| sed -e "s/^[^ ]*/§${srv}§ </;"; echo "§§end§${PIPESTATUS[0]}§${srv}"' )
+}
+
+load_servers_from_file() {
+    if [[ ! -f "$server_list_location" ]]; then
+        echo "\"${server_list_location}\" file does not exist! Populate it or provide servers from cli"
+        return 1
+    fi
+
+    while read -r server
+    do
+        servers+=("$server")
+    done < "$server_list_location"
+
+    if [[ "${#servers}" == 0 ]]; then
+        echo "\"${server_list_location}\" appears to be empty!"
+        return 1
+    fi
+}
+
+if [[ "$#" == 0 ]]; then
+    load_servers_from_file
+else
+    servers=("$@")
+fi
+total_servers="${#servers[@]}"
+
+main
